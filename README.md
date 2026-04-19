@@ -80,7 +80,7 @@ claude mcp add-json grok-search --scope user '{
   "command": "uvx",
   "args": [
     "--from",
-    "git+https://github.com/GuDaStudio/GrokSearch@grok-with-tavily",
+    "git+git+https://github.com/JARVIS-no1/GrokSearch@main",
     "grok-search"
   ],
   "env": {
@@ -107,7 +107,7 @@ claude mcp add-json grok-search --scope user '{
   "args": [
     "--native-tls",
     "--from",
-    "git+https://github.com/GuDaStudio/GrokSearch@grok-with-tavily",
+    "git+git+https://github.com/JARVIS-no1/GrokSearch@main",
     "grok-search"
   ],
   "env": {
