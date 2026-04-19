@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 from pathlib import Path
 
 # 支持直接运行：添加 src 目录到 Python 路径
@@ -31,6 +31,28 @@ mcp = FastMCP("grok-search")
 _SOURCES_CACHE = SourcesCache(max_size=256)
 _AVAILABLE_MODELS_CACHE: dict[tuple[str, str], list[str]] = {}
 _AVAILABLE_MODELS_LOCK = asyncio.Lock()
+
+
+def get_server() -> FastMCP:
+    """Expose the FastMCP instance for direct import and external runners."""
+    return mcp
+
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health_check(request):  # noqa: ARG001
+    """Simple health endpoint for Railway / load balancers."""
+    from starlette.responses import JSONResponse
+
+    transport = _normalize_transport(config.mcp_transport)
+    path = config.mcp_path or _default_path_for_transport(transport)
+    return JSONResponse(
+        {
+            "status": "ok",
+            "service": "grok-search",
+            "transport": transport,
+            "mcp_path": path,
+        }
+    )
 
 
 async def _fetch_available_models(api_url: str, api_key: str) -> list[str]:
@@ -839,27 +861,44 @@ async def plan_execution(
     ), ensure_ascii=False, indent=2)
 
 
-def main():
-    import signal
+def _normalize_transport(transport: str | None) -> str:
+    normalized = (transport or "").strip().lower()
+    if normalized in ("", "stdio"):
+        return "stdio"
+    if normalized in ("http", "streamable-http", "streamable_http", "streamablehttp"):
+        return "http"
+    if normalized == "sse":
+        return "sse"
+    raise ValueError(
+        f"Unsupported GROK_MCP_TRANSPORT={transport!r}. "
+        "Expected one of: stdio, http, streamable-http, sse."
+    )
+
+
+def _default_path_for_transport(transport: str) -> str:
+    return "/sse/" if transport == "sse" else "/mcp/"
+
+
+def _configure_process_lifecycle() -> None:
     import os
+    import signal
     import threading
 
-    # 信号处理（仅主线程）
     if threading.current_thread() is threading.main_thread():
-        def handle_shutdown(signum, frame):
+        def handle_shutdown(signum, frame):  # noqa: ARG001
             os._exit(0)
+
         signal.signal(signal.SIGINT, handle_shutdown)
-        if sys.platform != 'win32':
+        if sys.platform != "win32":
             signal.signal(signal.SIGTERM, handle_shutdown)
 
-    # Windows 父进程监控
-    if sys.platform == 'win32':
-        import time
+    if sys.platform == "win32":
         import ctypes
+        import time
+
         parent_pid = os.getppid()
 
-        def is_parent_alive(pid):
-            """Windows 下检查进程是否存活"""
+        def is_parent_alive(pid: int) -> bool:
             PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
             STILL_ACTIVE = 259
             kernel32 = ctypes.windll.kernel32
@@ -869,9 +908,9 @@ def main():
             exit_code = ctypes.c_ulong()
             result = kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
             kernel32.CloseHandle(handle)
-            return result and exit_code.value == STILL_ACTIVE
+            return bool(result and exit_code.value == STILL_ACTIVE)
 
-        def monitor_parent():
+        def monitor_parent() -> None:
             while True:
                 if not is_parent_alive(parent_pid):
                     os._exit(0)
@@ -879,12 +918,58 @@ def main():
 
         threading.Thread(target=monitor_parent, daemon=True).start()
 
+
+def _run_server(
+    transport: str | None = None,
+    *,
+    host: str | None = None,
+    port: int | None = None,
+    path: str | None = None,
+    show_banner: bool | None = None,
+) -> None:
+    import os
+
+    _configure_process_lifecycle()
+
+    resolved_transport = _normalize_transport(transport or config.mcp_transport)
+    resolved_banner = config.show_server_banner if show_banner is None else show_banner
+
     try:
-        mcp.run(transport="stdio", show_banner=False)
+        if resolved_transport == "stdio":
+            mcp.run(transport="stdio", show_banner=resolved_banner)
+            return
+
+        resolved_host = host or config.mcp_host
+        resolved_port = port or config.mcp_port
+        resolved_path = path or config.mcp_path or _default_path_for_transport(resolved_transport)
+
+        mcp.run(
+            transport=resolved_transport,
+            host=resolved_host,
+            port=resolved_port,
+            path=resolved_path,
+            show_banner=resolved_banner,
+        )
     except KeyboardInterrupt:
         pass
     finally:
         os._exit(0)
+
+
+def main() -> None:
+    _run_server()
+
+
+def main_stdio() -> None:
+    _run_server("stdio")
+
+
+def main_http() -> None:
+    _run_server("http")
+
+
+def main_sse() -> None:
+    _run_server("sse")
 
 
 if __name__ == "__main__":

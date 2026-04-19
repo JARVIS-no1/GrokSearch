@@ -1,13 +1,15 @@
-![Image](../images/title.png)
+﻿![Image](../images/title.png)
 <div align="center">
 
 <!-- # Grok Search MCP -->
 
 English | [简体中文](../README.md)
 
-**Grok-with-Tavily MCP, providing enhanced web access for Claude Code**
+**Grok-with-Tavily MCP: a general-purpose web search MCP for Claude Code / Cherry Studio / Chatbox / Codex / Cursor**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/) [![FastMCP](https://img.shields.io/badge/FastMCP-2.0.0+-green.svg)](https://github.com/jlowin/fastmcp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![FastMCP](https://img.shields.io/badge/FastMCP-2.0.0+-green.svg)](https://github.com/jlowin/fastmcp)
 
 </div>
 
@@ -15,45 +17,59 @@ English | [简体中文](../README.md)
 
 ## 1. Overview
 
-Grok Search MCP is an MCP server built on [FastMCP](https://github.com/jlowin/fastmcp), featuring a **dual-engine architecture**: **Grok** handles AI-driven intelligent search, while **Tavily** handles high-fidelity web content extraction and site mapping. Together they provide complete real-time web access for LLM clients such as Claude Code and Cherry Studio.
+Grok Search MCP is an MCP server built on [FastMCP](https://github.com/jlowin/fastmcp) with a dual-engine architecture:
 
+- **Grok** for AI-driven web search
+- **Tavily** for web extraction and site mapping
+- **Firecrawl** as a fallback extractor when Tavily fails
+
+It provides a unified real-time web access layer for Claude Code, Cherry Studio, Chatbox, Codex, Cursor, and other MCP-compatible clients.
+
+```text
+LLM Client ──MCP──► Grok Search Server
+                    ├─ web_search  ───► Grok API
+                    ├─ web_fetch   ───► Tavily Extract → Firecrawl Scrape
+                    └─ web_map     ───► Tavily Map
 ```
-Claude --MCP--> Grok Search Server
-                  ├─ web_search  ---> Grok API (AI Search)
-                  ├─ web_fetch   ---> Tavily Extract (Content Extraction)
-                  └─ web_map     ---> Tavily Map (Site Mapping)
-```
 
-### Features
+---
 
-- **Dual Engine**: Grok search + Tavily extraction/mapping, complementary collaboration
-- **OpenAI-compatible interface**, supports any Grok mirror endpoint
-- **Automatic time injection** (detects time-related queries, injects local time context)
-- One-click disable Claude Code's built-in WebSearch/WebFetch, force routing to this tool
-- Smart retry (Retry-After header parsing + exponential backoff)
-- Parent process monitoring (auto-detects parent process exit on Windows, prevents zombie processes)
+## 2. Multi-client / multi-transport support
 
-### Demo
+This version supports three transports:
 
-Using `cherry studio` with this MCP configured, here's how `claude-opus-4.6` leverages this project for external knowledge retrieval, reducing hallucination rates.
+- `stdio`: best default for local clients
+- `http`: Streamable HTTP for Railway / Docker / cloud deployment
+- `sse`: compatibility mode for older remote clients
 
-![](../images/wogrok.png)
-As shown above, **for a fair experiment, we enabled Claude's built-in search tools**, yet Opus 4.6 still relied on its internal knowledge without consulting FastAPI's official documentation for the latest examples.
+### Recommended order
 
-![](../images/wgrok.png)
-As shown above, with `grok-search MCP` enabled under the same experimental conditions, Opus 4.6 proactively made multiple search calls to **retrieve official documentation, producing more reliable answers.**
+1. Prefer **`stdio`** for local clients
+2. Prefer **`http` + `/mcp/`** for standard remote deployment
+3. Use **`sse` + `/sse/`** only when a remote client has poor Streamable HTTP compatibility
 
+---
 
-## 2. Installation
+## 3. Features
 
-### Prerequisites
+- Dual-engine search: Grok + Tavily
+- Firecrawl fallback when Tavily extraction fails
+- OpenAI-compatible upstream API support
+- Automatic time-context injection for time-sensitive queries
+- Smart retries with Retry-After parsing and backoff
+- Compatibility with Cherry Studio, Chatbox, Claude Code, Codex, Cursor
+- Multiple transport modes: stdio / Streamable HTTP / SSE
+- Windows parent-process monitoring for local stdio runs
+
+---
+
+## 4. Requirements
 
 - Python 3.10+
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) (recommended Python package manager)
-- Claude Code
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) (recommended)
+- or a working `pip`
 
-<details>
-<summary><b>Install uv</b></summary>
+Install uv:
 
 ```bash
 # Linux/macOS
@@ -63,74 +79,146 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-> Windows users are **strongly recommended** to run this project in WSL.
+> If you hit isolation, TLS, or dependency issues on Windows, WSL is recommended.
 
-</details>
+---
 
-### One-Click Install
+## 5. Default install source
 
-If you have previously installed this project, remove the old MCP first:
+The install examples in this document currently use the following repository:
+
+```text
+git+https://github.com/JARVIS-no1/GrokSearch@main
 ```
-claude mcp remove grok-search
-```
 
-Replace the environment variables in the following command with your own values. The Grok endpoint must be OpenAI-compatible; Tavily is optional — `web_fetch` and `web_map` will be unavailable without it.
+If you later publish your own fork, replace it globally with your repository URL.
 
-#### GuDa Users (Recommended)
+---
 
-GuDa users only need to set `GUDA_API_KEY` to access all services — API URLs are automatically derived:
+## 6. Quick start
+
+### 1) Local stdio mode (recommended)
+
+Best for:
+
+- Claude Code
+- Cherry Studio
+- Codex / Cursor
+- local Chatbox MCP
+
+#### Run directly with uvx
 
 ```bash
-claude mcp add-json grok-search --scope user '{
-  "type": "stdio",
-  "command": "uvx",
-  "args": [
-    "--from",
-    "git+https://github.com/GuDaStudio/GrokSearch@grok-with-tavily",
-    "grok-search"
-  ],
-  "env": {
-    "GUDA_API_KEY": "your-guda-api-key"
-  }
-}'
+uvx --from git+https://github.com/JARVIS-no1/GrokSearch@main grok-search
 ```
 
-#### Custom Configuration
-
-To use your own API endpoints, configure each service separately:
+Or explicitly select stdio:
 
 ```bash
-claude mcp add-json grok-search --scope user '{
-  "type": "stdio",
-  "command": "uvx",
-  "args": [
-    "--from",
-    "git+https://github.com/GuDaStudio/GrokSearch@grok-with-tavily",
-    "grok-search"
-  ],
-  "env": {
-    "GROK_API_URL": "https://your-api-endpoint.com/v1",
-    "GROK_API_KEY": "your-grok-api-key",
-    "TAVILY_API_KEY": "tvly-your-tavily-key",
-    "TAVILY_API_URL": "https://api.tavily.com"
-  }
-}'
+uvx --from git+https://github.com/JARVIS-no1/GrokSearch@main grok-search-stdio
 ```
 
-You can also configure additional environment variables in the `env` field:
+### 2) Install locally and run
+
+```bash
+pip install .
+```
+
+Default entrypoint:
+
+```bash
+grok-search
+```
+
+Explicit entrypoints:
+
+```bash
+grok-search-stdio
+grok-search-http
+grok-search-sse
+```
+
+---
+
+## 7. Remote deployment
+
+### Default Docker / Railway mode
+
+The current Dockerfile defaults to:
+
+- `GROK_MCP_TRANSPORT=http`
+- listen on `0.0.0.0:${PORT}`
+- default path `/mcp/`
+- health check path `/health`
+
+Default remote MCP endpoint:
+
+```text
+https://your-domain.example/mcp/
+```
+
+Health check endpoint:
+
+```text
+https://your-domain.example/health
+```
+
+### If you need Chatbox compatibility
+
+Set the deployment environment variable to:
+
+```bash
+GROK_MCP_TRANSPORT=sse
+```
+
+Then the default endpoint becomes:
+
+```text
+https://your-domain.example/sse/
+```
+
+### Railway template
+
+This repo now includes:
+
+- `railway.json.example`
+- `docs/RAILWAY.md`
+
+If you want to deploy on Railway, start with:
+
+- [`docs/RAILWAY.md`](./RAILWAY.md)
+
+---
+
+## 8. Environment variables
+
+### Core API config
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `GUDA_API_KEY` | No | - | GuDa API key (auto-derives all service URLs and keys when set) |
-| `GUDA_BASE_URL` | No | `https://code.guda.studio` | GuDa service base URL |
-| `GROK_API_URL` | No | `{GUDA_BASE_URL}/grok/v1` | Grok API endpoint (OpenAI-compatible), overrides GuDa-derived value |
-| `GROK_API_KEY` | No | `{GUDA_API_KEY}` | Grok API key, overrides GuDa-derived value |
-| `GROK_MODEL` | No | `grok-4.20-beta` | Default model (takes precedence over `~/.config/grok-search/config.json` when set) |
-| `TAVILY_API_KEY` | No | `{GUDA_API_KEY}` | Tavily API key (for web_fetch / web_map) |
-| `TAVILY_API_URL` | No | `{GUDA_BASE_URL}/tavily` | Tavily API endpoint |
+| `GROK_API_URL` | Yes | - | Grok API endpoint, must be OpenAI-compatible |
+| `GROK_API_KEY` | Yes | - | Grok API key |
+| `GROK_MODEL` | No | `grok-4-fast` | Default model |
+| `TAVILY_API_KEY` | No | - | Tavily API key |
+| `TAVILY_API_URL` | No | `https://api.tavily.com` | Tavily endpoint |
 | `TAVILY_ENABLED` | No | `true` | Enable Tavily |
-| `FIRECRAWL_API_KEY` | No | `{GUDA_API_KEY}` | Firecrawl API key (fallback when Tavily fails) |
-| `FIRECRAWL_API_URL` | No | `{GUDA_BASE_URL}/firecrawl` | Firecrawl API endpoint |
+| `FIRECRAWL_API_KEY` | No | - | Firecrawl API key |
+| `FIRECRAWL_API_URL` | No | `https://api.firecrawl.dev/v2` | Firecrawl endpoint |
+
+### MCP transport config
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `GROK_MCP_TRANSPORT` | No | `stdio` | `stdio` / `http` / `sse` |
+| `GROK_MCP_HOST` | No | `127.0.0.1` | HTTP/SSE bind host |
+| `GROK_MCP_PORT` | No | `8000` | HTTP/SSE bind port |
+| `GROK_MCP_PATH` | No | auto | Custom path; `http` defaults to `/mcp/`, `sse` to `/sse/` |
+| `GROK_MCP_SHOW_BANNER` | No | `false` | Show FastMCP banner |
+
+### Debug and logs
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
 | `GROK_DEBUG` | No | `false` | Debug mode |
 | `GROK_LOG_LEVEL` | No | `INFO` | Log level |
 | `GROK_LOG_DIR` | No | `logs` | Log directory |
@@ -138,139 +226,216 @@ You can also configure additional environment variables in the `env` field:
 | `GROK_RETRY_MULTIPLIER` | No | `1` | Retry backoff multiplier |
 | `GROK_RETRY_MAX_WAIT` | No | `10` | Max retry wait in seconds |
 
-> **Note**: When `GUDA_API_KEY` is set, all `GROK_API_URL`/`GROK_API_KEY`/`TAVILY_*`/`FIRECRAWL_*` variables become optional as they are auto-derived from `GUDA_BASE_URL`. Explicitly set variables take higher priority.
+---
 
+## 9. Client setup notes
 
-### Verify Installation
+See the full guide here:
+
+- [`CLIENTS.md`](./CLIENTS.md)
+
+### Cherry Studio
+
+Recommended: `STDIO`
+
+```text
+command: uvx
+args:
+  --from
+  git+https://github.com/JARVIS-no1/GrokSearch@main
+  grok-search
+```
+
+### Chatbox
+
+#### Option A: local stdio (most reliable)
+
+```json
+{
+  "name": "grok-search",
+  "command": "uvx",
+  "args": [
+    "--from",
+    "git+https://github.com/JARVIS-no1/GrokSearch@main",
+    "grok-search-stdio"
+  ],
+  "env": {
+    "GROK_API_URL": "https://your-api-endpoint.com/v1",
+    "GROK_API_KEY": "your-grok-api-key"
+  }
+}
+```
+
+#### Option B: remote SSE
+
+```text
+https://your-domain.example/sse/
+```
+
+#### Option C: remote Streamable HTTP
+
+```text
+https://your-domain.example/mcp/
+```
+
+> If Chatbox reports an `SSE Transport Error`, prefer local stdio first, or switch the remote deployment to `sse`.
+
+### Claude Code / Codex / Cursor
+
+Local stdio is usually the best choice because it is simpler, more stable, and avoids remote auth / proxy / path-rewrite issues.
+
+---
+
+## 10. MCP tools
+
+### `web_search`
+
+AI web search tool.
+
+Returns:
+
+- `session_id`
+- `content`
+- `sources_count`
+
+### `get_sources`
+
+Retrieves cached sources for a previous `web_search` call.
+
+### `web_fetch`
+
+Fetches page content, Tavily first, then Firecrawl fallback.
+
+### `web_map`
+
+Site structure mapping tool powered by Tavily.
+
+### `get_config_info`
+
+Displays current configuration and tests API connectivity.
+
+### `switch_model`
+
+Changes the default Grok model and persists it locally.
+
+### `toggle_builtin_tools`
+
+Claude Code helper for disabling the built-in WebSearch / WebFetch tools.
+
+### `plan_*`
+
+Structured planning tools for complex retrieval workflows.
+
+---
+
+## 11. Validation
+
+### 1) Verify stdio mode
+
+```bash
+grok-search-stdio
+```
+
+or:
 
 ```bash
 claude mcp list
 ```
 
-After confirming a successful connection, we **highly recommend** typing the following in a Claude conversation:
+### 2) Verify HTTP mode
+
+```bash
+GROK_MCP_TRANSPORT=http
+GROK_MCP_HOST=127.0.0.1
+GROK_MCP_PORT=8000
+grok-search
 ```
-Call grok-search toggle_builtin_tools to disable Claude Code's built-in WebSearch and WebFetch tools
+
+Then use:
+
+```text
+http://127.0.0.1:8000/mcp/
 ```
-This will automatically modify the **project-level** `.claude/settings.json` `permissions.deny`, disabling Claude Code's built-in WebSearch and WebFetch, forcing Claude Code to use this project for searches!
 
+Health check:
 
+```text
+http://127.0.0.1:8000/health
+```
 
-## 3. MCP Tools
+### 3) Verify SSE mode
 
-<details>
-<summary>This project provides eight MCP tools (click to expand)</summary>
+```bash
+GROK_MCP_TRANSPORT=sse
+GROK_MCP_HOST=127.0.0.1
+GROK_MCP_PORT=8000
+grok-search
+```
 
-### `web_search` — AI Web Search
+Then point the client to:
 
-Executes AI-driven web search via Grok API. By default it returns only Grok's answer and a `session_id` for retrieving sources later.
+```text
+http://127.0.0.1:8000/sse/
+```
 
-`web_search` does not expand sources in the response; it only returns `sources_count`. Sources are cached server-side by `session_id` and can be fetched with `get_sources`.
+The health endpoint is still available at:
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `query` | string | Yes | - | Search query |
-| `platform` | string | No | `""` | Focus platform (e.g., `"Twitter"`, `"GitHub, Reddit"`) |
-| `model` | string | No | `null` | Per-request Grok model ID |
-| `extra_sources` | int | No | `0` | Extra sources via Tavily/Firecrawl (0 disables) |
-
-Automatically detects time-related keywords in queries (e.g., "latest", "today", "recent"), injecting local time context to improve accuracy for time-sensitive searches.
-
-Return value (structured dict):
-- `session_id`: search session ID
-- `content`: answer only (sources removed)
-- `sources_count`: cached sources count
-
-### `get_sources` — Retrieve Sources
-
-Retrieves the full cached source list for a previous `web_search` call.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `session_id` | string | Yes | `session_id` returned by `web_search` |
-
-Return value (structured dict):
-- `session_id`
-- `sources_count`
-- `sources`: source list (each item includes `url`, may include `title`/`description`/`provider`)
-
-### `web_fetch` — Web Content Extraction
-
-Extracts complete web content via Tavily Extract API, returning Markdown format.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `url` | string | Yes | Target webpage URL |
-
-### `web_map` — Site Structure Mapping
-
-Traverses website structure via Tavily Map API, discovering URLs and generating a site map.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `url` | string | Yes | - | Starting URL |
-| `instructions` | string | No | `""` | Natural language filtering instructions |
-| `max_depth` | int | No | `1` | Max traversal depth (1-5) |
-| `max_breadth` | int | No | `20` | Max links to follow per page (1-500) |
-| `limit` | int | No | `50` | Total link processing limit (1-500) |
-| `timeout` | int | No | `150` | Timeout in seconds (10-150) |
-
-### `get_config_info` — Configuration Diagnostics
-
-No parameters required. Displays all configuration status, tests Grok API connection, returns response time and available model list (API keys auto-masked).
-
-### `switch_model` — Model Switching
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `model` | string | Yes | Model ID (e.g., `"grok-4-fast"`, `"grok-2-latest"`) |
-
-Settings persist to `~/.config/grok-search/config.json` across sessions.
-
-### `toggle_builtin_tools` — Tool Routing Control
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `action` | string | No | `"status"` | `"on"` disable built-in tools / `"off"` enable built-in tools / `"status"` check status |
-
-Modifies project-level `.claude/settings.json` `permissions.deny` to disable Claude Code's built-in WebSearch and WebFetch.
-
-### `search_planning` — Search Planning
-
-A structured multi-phase planning scaffold to generate an executable search plan before running complex searches.
-</details>
-
-## 4. FAQ
-
-<details>
-<summary>
-Q: Must I configure both Grok and Tavily?
-</summary>
-A: Set `GUDA_API_KEY` to get full Grok + Tavily + Firecrawl service. Without GuDa, Grok (`GROK_API_URL` + `GROK_API_KEY`) is required and provides the core search capability. Tavily is optional — without it, `web_fetch` and `web_map` will return configuration error messages.
-</details>
-
-<details>
-<summary>
-Q: What format does the Grok API URL need?
-</summary>
-A: An OpenAI-compatible API endpoint (supporting `/chat/completions` and `/models` endpoints). If using official Grok, access it through an OpenAI-compatible mirror.
-</details>
-
-<details>
-<summary>
-Q: How to verify configuration?
-</summary>
-A: Say "Show grok-search configuration info" in a Claude conversation to automatically test the API connection and display results.
-</details>
-
-## License
-
-[MIT License](LICENSE)
+```text
+http://127.0.0.1:8000/health
+```
 
 ---
 
-<div align="center">
+## 12. Security notes
 
-**If this project helps you, please give it a Star!**
+If you expose this MCP service publicly, at minimum consider:
 
-[![Star History Chart](https://api.star-history.com/svg?repos=GuDaStudio/GrokSearch&type=date&legend=top-left)](https://www.star-history.com/#GuDaStudio/GrokSearch&type=date&legend=top-left)
-</div>
+- putting it behind a reverse proxy
+- adding authentication or access control
+- validating `Origin`
+- binding to `127.0.0.1` for local-only debugging
+
+---
+
+## 13. FAQ
+
+### Q1: Do I need both Grok and Tavily?
+
+No.
+
+- `GROK_API_URL` + `GROK_API_KEY` are the core requirements
+- Tavily / Firecrawl are optional enhancements
+- without Tavily, `web_fetch` / `web_map` will be limited
+
+### Q2: Why does Chatbox fail in remote mode?
+
+Common reasons:
+
+- you used `/mcp` instead of `/mcp/`
+- the client expects legacy SSE behavior
+- your service is running Streamable HTTP, not SSE
+
+Recommended troubleshooting order:
+
+1. try local stdio first
+2. then try `/sse/`
+3. finally try `/mcp/`
+
+### Q3: What format should the Grok API endpoint use?
+
+It should be OpenAI-compatible and support at least:
+
+- `/chat/completions`
+- `/models`
+
+---
+
+## License
+
+[MIT License](../LICENSE)
+
+
+
+
+
+

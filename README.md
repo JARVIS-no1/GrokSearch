@@ -1,57 +1,75 @@
-![这是图片](./images/title.png)
+﻿![这是图片](./images/title.png)
 <div align="center">
 
 <!-- # Grok Search MCP -->
 
 [English](./docs/README_EN.md) | 简体中文
 
-**Grok-with-Tavily MCP，为 Claude Code 提供更完善的网络访问能力**
+**Grok-with-Tavily MCP：面向 Claude Code / Cherry Studio / Chatbox / Codex / Cursor 的通用网络搜索 MCP**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/) [![FastMCP](https://img.shields.io/badge/FastMCP-2.0.0+-green.svg)](https://github.com/jlowin/fastmcp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![FastMCP](https://img.shields.io/badge/FastMCP-2.0.0+-green.svg)](https://github.com/jlowin/fastmcp)
 
 </div>
 
 ---
 
-## 一、概述
+## 一、项目简介
 
-Grok Search MCP 是一个基于 [FastMCP](https://github.com/jlowin/fastmcp) 构建的 MCP 服务器，采用**双引擎架构**：**Grok** 负责 AI 驱动的智能搜索，**Tavily** 负责高保真网页抓取与站点映射，各取所长为 Claude Code / Cherry Studio 等LLM Client提供完整的实时网络访问能力。
+Grok Search MCP 是一个基于 [FastMCP](https://github.com/jlowin/fastmcp) 构建的 MCP 服务器，采用双引擎架构：
 
+- **Grok**：负责 AI 驱动的网络搜索
+- **Tavily**：负责网页抓取与站点映射
+- **Firecrawl**：作为 Tavily 失败时的抓取兜底
+
+它为 Claude Code、Cherry Studio、Chatbox、Codex、Cursor 等 MCP 客户端提供统一的实时网络访问能力。
+
+```text
+LLM Client ──MCP──► Grok Search Server
+                    ├─ web_search  ───► Grok API
+                    ├─ web_fetch   ───► Tavily Extract → Firecrawl Scrape
+                    └─ web_map     ───► Tavily Map
 ```
-Claude ──MCP──► Grok Search Server
-                  ├─ web_search  ───► Grok API（AI 搜索）
-                  ├─ web_fetch   ───► Tavily Extract → Firecrawl Scrape（内容抓取，自动降级）
-                  └─ web_map     ───► Tavily Map（站点映射）
-```
 
-### 功能特性
+---
 
-- **双引擎**：Grok 搜索 + Tavily 抓取/映射，互补协作
-- **Firecrawl 托底**：Tavily 提取失败时自动降级到 Firecrawl Scrape，支持空内容自动重试
-- **OpenAI 兼容接口**，支持任意 Grok 镜像站
-- **自动时间注入**（检测时间相关查询，注入本地时间上下文）
-- 一键禁用 Claude Code 官方 WebSearch/WebFetch，强制路由到本工具
-- 智能重试（支持 Retry-After 头解析 + 指数退避）
-- 父进程监控（Windows 下自动检测父进程退出，防止僵尸进程）
+## 二、当前版本的通用化改造
 
-### 效果展示
-我们以在`cherry studio`中配置本MCP为例，展示了`claude-opus-4.6`模型如何通过本项目实现外部知识搜集，降低幻觉率。
-![](./images/wogrok.png)
-如上图，**为公平实验，我们打开了claude模型内置的搜索工具**，然而opus 4.6仍然相信自己的内部常识，不查询FastAPI的官方文档，以获取最新示例。
-![](./images/wgrok.png)
-如上图，当打开`grok-search MCP`时，在相同的实验条件下，opus 4.6主动调用多次搜索，以**获取官方文档，回答更可靠。** 
+本项目现在同时支持三种传输：
 
+- `stdio`：本地客户端首选，兼容性最好
+- `http`：Streamable HTTP，适合 Railway / Docker / 云端远程部署
+- `sse`：兼容偏旧实现的远程客户端
 
-## 二、安装
+### 推荐使用原则
 
-### 前置条件
+1. **本地客户端优先使用 `stdio`**
+2. **远程标准部署优先使用 `http` + `/mcp/`**
+3. **Chatbox 等兼容性一般的远程客户端，再考虑 `sse` + `/sse/`**
+
+---
+
+## 三、功能特性
+
+- **双引擎搜索**：Grok 搜索 + Tavily 抓取/映射
+- **Firecrawl 兜底**：Tavily 失败时自动降级到 Firecrawl
+- **OpenAI 兼容接口**：支持任意 Grok 镜像站
+- **自动时间注入**：检测“今天 / 最新 / recent”等查询，注入本地时间上下文
+- **智能重试**：支持 Retry-After 解析与指数退避
+- **多客户端兼容**：适配 Cherry Studio、Chatbox、Claude Code、Codex、Cursor
+- **多传输模式**：stdio / Streamable HTTP / SSE
+- **Windows 父进程监控**：避免本地 stdio 场景下产生僵尸进程
+
+---
+
+## 四、安装要求
 
 - Python 3.10+
-- [uv](https://docs.astral.sh/uv/getting-started/installation/)（推荐的 Python 包管理器）
-- Claude Code
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)（推荐）
+- 或可用的 `pip`
 
-<details>
-<summary><b>安装 uv</b></summary>
+安装 uv：
 
 ```bash
 # Linux/macOS
@@ -61,204 +79,362 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-> Windows 用户**强烈推荐**在 WSL 中运行本项目。
+> Windows 用户如遇到环境隔离、证书或依赖问题，建议优先在 WSL 中运行。
 
-</details>
+---
 
-### 一键安装
-若之前安装过本项目，使用以下命令卸载旧版MCP。
+## 五、默认安装源
+
+当前文档中的安装示例默认使用以下仓库地址：
+
+```text
+git+https://github.com/JARVIS-no1/GrokSearch@main
 ```
-claude mcp remove grok-search
-```
 
+如果你后续把代码推送到自己的 GitHub 仓库，再批量替换为你的仓库地址即可。
 
-将以下命令中的环境变量替换为你自己的值后执行。Grok 接口需为 OpenAI 兼容格式；Tavily 为可选配置，未配置时工具 `web_fetch` 和 `web_map` 不可用。
+---
+
+## 六、快速开始
+
+### 1）本地 stdio 方式（推荐）
+
+适用于：
+
+- Claude Code
+- Cherry Studio
+- Codex / Cursor
+- Chatbox 的本地 MCP
+
+#### 使用 uvx 直接运行
 
 ```bash
-claude mcp add-json grok-search --scope user '{
-  "type": "stdio",
-  "command": "uvx",
-  "args": [
-    "--from",
-    "git+git+https://github.com/JARVIS-no1/GrokSearch@main",
-    "grok-search"
-  ],
-  "env": {
-    "GROK_API_URL": "https://your-api-endpoint.com/v1",
-    "GROK_API_KEY": "your-grok-api-key",
-    "TAVILY_API_KEY": "tvly-your-tavily-key",
-    "TAVILY_API_URL": "https://api.tavily.com"
-  }
-}'
+uvx --from git+https://github.com/JARVIS-no1/GrokSearch@main grok-search
 ```
 
-<details> <summary>如果遇到 SSL / 证书验证错误</summary>
+或显式指定 stdio：
 
-在部分企业网络或代理环境中，可能会出现类似错误：
+```bash
+uvx --from git+https://github.com/JARVIS-no1/GrokSearch@main grok-search-stdio
+```
 
-certificate verify failed
-self signed certificate in certificate chain
+### 2）本地安装后运行
 
-可以在 uvx 参数中添加 --native-tls，使其使用系统证书库：
+```bash
+pip install .
+```
 
-claude mcp add-json grok-search --scope user '{
-  "type": "stdio",
-  "command": "uvx",
-  "args": [
-    "--native-tls",
-    "--from",
-    "git+git+https://github.com/JARVIS-no1/GrokSearch@main",
-    "grok-search"
-  ],
-  "env": {
-    "GROK_API_URL": "https://your-api-endpoint.com/v1",
-    "GROK_API_KEY": "your-grok-api-key",
-    "TAVILY_API_KEY": "tvly-your-tavily-key",
-    "TAVILY_API_URL": "https://api.tavily.com"
-  }
-}'
-</details> ```
+默认入口：
 
-除此之外，你还可以在`env`字段中配置更多环境变量
+```bash
+grok-search
+```
+
+显式入口：
+
+```bash
+grok-search-stdio
+grok-search-http
+grok-search-sse
+```
+
+---
+
+## 七、远程部署
+
+### Docker / Railway 默认模式
+
+项目当前 Dockerfile 默认使用：
+
+- `GROK_MCP_TRANSPORT=http`
+- 监听 `0.0.0.0:${PORT}`
+- 默认路径 `/mcp/`
+- 健康检查路径 `/health`
+
+默认远程 MCP 地址：
+
+```text
+https://your-domain.example/mcp/
+```
+
+健康检查地址：
+
+```text
+https://your-domain.example/health
+```
+
+### 如果要兼容 Chatbox 远程模式
+
+部署时把环境变量改成：
+
+```bash
+GROK_MCP_TRANSPORT=sse
+```
+
+此时默认路径切换为：
+
+```text
+https://your-domain.example/sse/
+```
+
+### Railway 模板
+
+仓库里已新增：
+
+- `railway.json.example`
+- `docs/RAILWAY.md`
+
+如果你准备直接部署到 Railway，先看：
+
+- [`docs/RAILWAY.md`](./docs/RAILWAY.md)
+
+---
+
+## 八、环境变量
+
+### 核心 API 配置
 
 | 变量 | 必填 | 默认值 | 说明 |
 |------|------|--------|------|
-| `GROK_API_URL` | ✅ | - | Grok API 地址（OpenAI 兼容格式） |
+| `GROK_API_URL` | ✅ | - | Grok API 地址，需兼容 OpenAI 格式 |
 | `GROK_API_KEY` | ✅ | - | Grok API 密钥 |
-| `GROK_MODEL` | ❌ | `grok-4-fast` | 默认模型（设置后优先于 `~/.config/grok-search/config.json`） |
-| `TAVILY_API_KEY` | ❌ | - | Tavily API 密钥（用于 web_fetch / web_map） |
+| `GROK_MODEL` | ❌ | `grok-4-fast` | 默认模型 |
+| `TAVILY_API_KEY` | ❌ | - | Tavily API 密钥 |
 | `TAVILY_API_URL` | ❌ | `https://api.tavily.com` | Tavily API 地址 |
 | `TAVILY_ENABLED` | ❌ | `true` | 是否启用 Tavily |
-| `FIRECRAWL_API_KEY` | ❌ | - | Firecrawl API 密钥（Tavily 失败时托底） |
+| `FIRECRAWL_API_KEY` | ❌ | - | Firecrawl API 密钥 |
 | `FIRECRAWL_API_URL` | ❌ | `https://api.firecrawl.dev/v2` | Firecrawl API 地址 |
+
+### MCP 传输配置
+
+| 变量 | 必填 | 默认值 | 说明 |
+|------|------|--------|------|
+| `GROK_MCP_TRANSPORT` | ❌ | `stdio` | `stdio` / `http` / `sse` |
+| `GROK_MCP_HOST` | ❌ | `127.0.0.1` | HTTP/SSE 监听地址 |
+| `GROK_MCP_PORT` | ❌ | `8000` | HTTP/SSE 监听端口 |
+| `GROK_MCP_PATH` | ❌ | 自动 | 自定义 MCP 路径；`http` 默认 `/mcp/`，`sse` 默认 `/sse/` |
+| `GROK_MCP_SHOW_BANNER` | ❌ | `false` | 是否显示 FastMCP banner |
+
+### 调试与日志
+
+| 变量 | 必填 | 默认值 | 说明 |
+|------|------|--------|------|
 | `GROK_DEBUG` | ❌ | `false` | 调试模式 |
 | `GROK_LOG_LEVEL` | ❌ | `INFO` | 日志级别 |
 | `GROK_LOG_DIR` | ❌ | `logs` | 日志目录 |
 | `GROK_RETRY_MAX_ATTEMPTS` | ❌ | `3` | 最大重试次数 |
 | `GROK_RETRY_MULTIPLIER` | ❌ | `1` | 重试退避乘数 |
-| `GROK_RETRY_MAX_WAIT` | ❌ | `10` | 重试最大等待秒数 |
+| `GROK_RETRY_MAX_WAIT` | ❌ | `10` | 最大等待秒数 |
 
+---
 
-### 验证安装
+## 九、客户端配置建议
+
+更完整说明见：
+
+- [`docs/CLIENTS.md`](./docs/CLIENTS.md)
+
+### 1）Cherry Studio
+
+推荐 `STDIO`：
+
+- 命令：`uvx`
+- 参数：
+
+```text
+--from
+git+https://github.com/JARVIS-no1/GrokSearch@main
+grok-search
+```
+
+### 2）Chatbox
+
+#### 方案 A：本地 stdio（最稳）
+
+```json
+{
+  "name": "grok-search",
+  "command": "uvx",
+  "args": [
+    "--from",
+    "git+https://github.com/JARVIS-no1/GrokSearch@main",
+    "grok-search-stdio"
+  ],
+  "env": {
+    "GROK_API_URL": "https://your-api-endpoint.com/v1",
+    "GROK_API_KEY": "your-grok-api-key"
+  }
+}
+```
+
+#### 方案 B：远程 SSE
+
+```text
+https://your-domain.example/sse/
+```
+
+#### 方案 C：远程 Streamable HTTP
+
+```text
+https://your-domain.example/mcp/
+```
+
+> 如果 Chatbox 远程模式报 `SSE Transport Error`，优先回退到本地 stdio，或将远程部署改为 `sse`。
+
+### 3）Claude Code / Codex / Cursor
+
+推荐直接使用本地 stdio，因为：
+
+- 配置简单
+- 权限边界更清晰
+- 生命周期更稳定
+- 避免远程鉴权与代理问题
+
+---
+
+## 十、MCP 工具
+
+### `web_search`
+
+AI 网络搜索工具。
+
+返回：
+
+- `session_id`
+- `content`
+- `sources_count`
+
+### `get_sources`
+
+根据 `session_id` 获取 `web_search` 的信源列表。
+
+### `web_fetch`
+
+抓取网页正文，优先 Tavily，失败时自动降级到 Firecrawl。
+
+### `web_map`
+
+站点结构映射工具，依赖 Tavily。
+
+### `get_config_info`
+
+显示配置状态，并测试 Grok API 连通性。
+
+### `switch_model`
+
+切换默认 Grok 模型，配置持久化到本地配置文件。
+
+### `toggle_builtin_tools`
+
+用于 Claude Code 项目内一键禁用官方 WebSearch / WebFetch。
+
+### `plan_*`
+
+结构化搜索规划工具集，适合复杂检索流程。
+
+---
+
+## 十一、验证方式
+
+### 1）验证是否安装成功
+
+```bash
+grok-search-stdio
+```
+
+或：
 
 ```bash
 claude mcp list
 ```
 
-🍟 显示连接成功后，我们**十分推荐**在 Claude 对话中输入 
+### 2）验证 HTTP 模式
+
+```bash
+GROK_MCP_TRANSPORT=http
+GROK_MCP_HOST=127.0.0.1
+GROK_MCP_PORT=8000
+grok-search
 ```
-调用 grok-search toggle_builtin_tools，关闭Claude Code's built-in WebSearch and WebFetch tools
+
+然后访问：
+
+```text
+http://127.0.0.1:8000/mcp/
 ```
-工具将自动修改**项目级** `.claude/settings.json` 的 `permissions.deny`，一键禁用 Claude Code 官方的 WebSearch 和 WebFetch，从而迫使claude code调用本项目实现搜索！
 
+健康检查：
 
+```text
+http://127.0.0.1:8000/health
+```
 
-## 三、MCP 工具介绍
+### 3）验证 SSE 模式
 
-<details>
-<summary>本项目提供八个 MCP 工具（展开查看）</summary>
+```bash
+GROK_MCP_TRANSPORT=sse
+GROK_MCP_HOST=127.0.0.1
+GROK_MCP_PORT=8000
+grok-search
+```
 
-### `web_search` — AI 网络搜索
+然后客户端填：
 
-通过 Grok API 执行 AI 驱动的网络搜索，默认仅返回 Grok 的回答正文，并返回 `session_id` 以便后续获取信源。
+```text
+http://127.0.0.1:8000/sse/
+```
 
-`web_search` 输出不展开信源，仅返回 `sources_count`；信源会按 `session_id` 缓存在服务端，可用 `get_sources` 拉取。
+健康检查仍然可用：
 
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|------|------|------|--------|------|
-| `query` | string | ✅ | - | 搜索查询语句 |
-| `platform` | string | ❌ | `""` | 聚焦平台（如 `"Twitter"`, `"GitHub, Reddit"`） |
-| `model` | string | ❌ | `null` | 按次指定 Grok 模型 ID |
-| `extra_sources` | int | ❌ | `0` | 额外补充信源数量（Tavily/Firecrawl，可为 0 关闭） |
+```text
+http://127.0.0.1:8000/health
+```
 
-自动检测查询中的时间相关关键词（如"最新""今天""recent"等），注入本地时间上下文以提升时效性搜索的准确度。
+---
 
-返回值（结构化字典）：
-- `session_id`: 本次查询的会话 ID
-- `content`: Grok 回答正文（已自动剥离信源）
-- `sources_count`: 已缓存的信源数量
+## 十二、安全建议
 
-### `get_sources` — 获取信源
+如果你将 MCP 暴露到公网，建议至少做到：
 
-通过 `session_id` 获取对应 `web_search` 的全部信源。
+- 通过反向代理接入
+- 增加认证或访问控制
+- 校验 `Origin`
+- 内网调试时尽量绑定 `127.0.0.1`
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `session_id` | string | ✅ | `web_search` 返回的 `session_id` |
+---
 
-返回值（结构化字典）：
-- `session_id`
-- `sources_count`
-- `sources`: 信源列表（每项包含 `url`，可能包含 `title`/`description`/`provider`）
+## 十三、常见问题
 
-### `web_fetch` — 网页内容抓取
+### Q1：必须同时配置 Grok 和 Tavily 吗？
 
-通过 Tavily Extract API 获取完整网页内容，返回 Markdown 格式。Tavily 失败时自动降级到 Firecrawl Scrape 进行托底抓取。
+不是。
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `url` | string | ✅ | 目标网页 URL |
+- `GROK_API_URL` + `GROK_API_KEY` 是核心必填
+- Tavily / Firecrawl 都是可选增强
+- 不配 Tavily 时，`web_fetch` / `web_map` 能力会受限
 
-### `web_map` — 站点结构映射
+### Q2：为什么远程模式在 Chatbox 报错？
 
-通过 Tavily Map API 遍历网站结构，发现 URL 并生成站点地图。
+常见原因：
 
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|------|------|------|--------|------|
-| `url` | string | ✅ | - | 起始 URL |
-| `instructions` | string | ❌ | `""` | 自然语言过滤指令 |
-| `max_depth` | int | ❌ | `1` | 最大遍历深度（1-5） |
-| `max_breadth` | int | ❌ | `20` | 每页最大跟踪链接数（1-500） |
-| `limit` | int | ❌ | `50` | 总链接处理数上限（1-500） |
-| `timeout` | int | ❌ | `150` | 超时秒数（10-150） |
+- 你填的是 `/mcp` 不是 `/mcp/`
+- 客户端更偏向 legacy SSE
+- 你的服务当前跑的是 Streamable HTTP，而非 SSE
 
-### `get_config_info` — 配置诊断
+优先解决顺序：
 
-无需参数。显示所有配置状态、测试 Grok API 连接、返回响应时间和可用模型列表（API Key 自动脱敏）。
+1. 先试本地 stdio
+2. 再试 `/sse/`
+3. 最后再尝试 `/mcp/`
 
-### `switch_model` — 模型切换
+### Q3：Grok API 地址要求什么格式？
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `model` | string | ✅ | 模型 ID（如 `"grok-4-fast"`, `"grok-2-latest"`） |
+需要兼容 OpenAI 格式，至少支持：
 
-切换后配置持久化到 `~/.config/grok-search/config.json`，跨会话保持。
+- `/chat/completions`
+- `/models`
 
-### `toggle_builtin_tools` — 工具路由控制
-
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|------|------|------|--------|------|
-| `action` | string | ❌ | `"status"` | `"on"` 禁用官方工具 / `"off"` 启用官方工具 / `"status"` 查看状态 |
-
-修改项目级 `.claude/settings.json` 的 `permissions.deny`，一键禁用 Claude Code 官方的 WebSearch 和 WebFetch。
-
-### `search_planning` — 搜索规划
-
-结构化搜索规划脚手架（分阶段、多轮），用于在执行复杂搜索前先生成可执行的搜索计划。
-</details>
-
-## 四、常见问题
-
-<details>
-<summary>
-Q: 必须同时配置 Grok 和 Tavily 吗？
-</summary>
-A: Grok（`GROK_API_URL` + `GROK_API_KEY`）为必填，提供核心搜索能力。Tavily 和 Firecrawl 均为可选：配置 Tavily 后 `web_fetch` 优先使用 Tavily Extract，失败时降级到 Firecrawl Scrape；两者均未配置时 `web_fetch` 将返回配置错误提示。`web_map` 依赖 Tavily。
-</details>
-
-<details>
-<summary>
-Q: Grok API 地址需要什么格式？
-</summary>
-A: 需要 OpenAI 兼容格式的 API 地址（支持 `/chat/completions` 和 `/models` 端点）。如使用官方 Grok，需通过兼容 OpenAI 格式的镜像站访问。
-</details>
-
-<details>
-<summary>
-Q: 如何验证配置？
-</summary>
-A: 在 Claude 对话中说"显示 grok-search 配置信息"，将自动测试 API 连接并显示结果。
-</details>
+---
 
 ## 许可证
 
@@ -268,7 +444,14 @@ A: 在 Claude 对话中说"显示 grok-search 配置信息"，将自动测试 AP
 
 <div align="center">
 
-**如果这个项目对您有帮助，请给个 Star！**
+**如果这个项目对您有帮助，欢迎点个 Star。**
 
-[![Star History Chart](https://api.star-history.com/svg?repos=JARVIS-no1/GrokSearch&type=date&legend=top-left)](https://www.star-history.com/#JARVIS-no1/GrokSearch&type=date&legend=top-left)
 </div>
+
+
+
+
+
+
+
+

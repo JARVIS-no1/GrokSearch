@@ -26,3 +26,6 @@ where = ["src"]
 
 [project.scripts]
 grok-search = "grok_search.server:main"
+grok-search-stdio = "grok_search.server:main_stdio"
+grok-search-http = "grok_search.server:main_http"
+grok-search-sse = "grok_search.server:main_sse"

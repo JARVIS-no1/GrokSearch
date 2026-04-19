@@ -1,6 +1,7 @@
+﻿import json
 import os
-import json
 from pathlib import Path
+
 
 class Config:
     _instance = None
@@ -47,9 +48,16 @@ class Config:
         except IOError as e:
             raise ValueError(f"无法保存配置文件: {str(e)}")
 
+    @staticmethod
+    def _env_bool(name: str, default: bool) -> bool:
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        return raw.strip().lower() in ("true", "1", "yes", "on")
+
     @property
     def debug_enabled(self) -> bool:
-        return os.getenv("GROK_DEBUG", "false").lower() in ("true", "1", "yes")
+        return self._env_bool("GROK_DEBUG", False)
 
     @property
     def retry_max_attempts(self) -> int:
@@ -64,12 +72,32 @@ class Config:
         return int(os.getenv("GROK_RETRY_MAX_WAIT", "10"))
 
     @property
+    def mcp_transport(self) -> str:
+        return os.getenv("GROK_MCP_TRANSPORT", "stdio").strip().lower()
+
+    @property
+    def mcp_host(self) -> str:
+        return os.getenv("GROK_MCP_HOST", "127.0.0.1").strip() or "127.0.0.1"
+
+    @property
+    def mcp_port(self) -> int:
+        return int(os.getenv("GROK_MCP_PORT", "8000"))
+
+    @property
+    def mcp_path(self) -> str:
+        return os.getenv("GROK_MCP_PATH", "").strip()
+
+    @property
+    def show_server_banner(self) -> bool:
+        return self._env_bool("GROK_MCP_SHOW_BANNER", False)
+
+    @property
     def grok_api_url(self) -> str:
         url = os.getenv("GROK_API_URL")
         if not url:
             raise ValueError(
-                f"Grok API URL 未配置！\n"
-                f"请使用以下命令配置 MCP 服务器：\n{self._SETUP_COMMAND}"
+                "GROK_API_URL 未配置。\n"
+                f"请参考以下命令配置 MCP 服务：\n{self._SETUP_COMMAND}"
             )
         return url
 
@@ -78,14 +106,14 @@ class Config:
         key = os.getenv("GROK_API_KEY")
         if not key:
             raise ValueError(
-                f"Grok API Key 未配置！\n"
-                f"请使用以下命令配置 MCP 服务器：\n{self._SETUP_COMMAND}"
+                "GROK_API_KEY 未配置。\n"
+                f"请参考以下命令配置 MCP 服务：\n{self._SETUP_COMMAND}"
             )
         return key
 
     @property
     def tavily_enabled(self) -> bool:
-        return os.getenv("TAVILY_ENABLED", "true").lower() in ("true", "1", "yes")
+        return self._env_bool("TAVILY_ENABLED", True)
 
     @property
     def tavily_api_url(self) -> str:
@@ -161,18 +189,15 @@ class Config:
         self._cached_model = self._apply_model_suffix(model)
 
     @staticmethod
-    def _mask_api_key(key: str) -> str:
-        """脱敏显示 API Key，只显示前后各 4 个字符"""
+    def _mask_api_key(key: str | None) -> str:
         if not key or len(key) <= 8:
-            return "***"
+            return "***" if key else "未配置"
         return f"{key[:4]}{'*' * (len(key) - 8)}{key[-4:]}"
 
     def get_config_info(self) -> dict:
-        """获取配置信息（API Key 已脱敏）"""
         try:
             api_url = self.grok_api_url
-            api_key_raw = self.grok_api_key
-            api_key_masked = self._mask_api_key(api_key_raw)
+            api_key_masked = self._mask_api_key(self.grok_api_key)
             config_status = "✅ 配置完整"
         except ValueError as e:
             api_url = "未配置"
@@ -184,14 +209,23 @@ class Config:
             "GROK_API_KEY": api_key_masked,
             "GROK_MODEL": self.grok_model,
             "GROK_DEBUG": self.debug_enabled,
+            "GROK_MCP_TRANSPORT": self.mcp_transport,
+            "GROK_MCP_HOST": self.mcp_host,
+            "GROK_MCP_PORT": self.mcp_port,
+            "GROK_MCP_PATH": self.mcp_path or "(auto)",
+            "GROK_MCP_SHOW_BANNER": self.show_server_banner,
             "GROK_LOG_LEVEL": self.log_level,
             "GROK_LOG_DIR": str(self.log_dir),
             "TAVILY_API_URL": self.tavily_api_url,
             "TAVILY_ENABLED": self.tavily_enabled,
-            "TAVILY_API_KEY": self._mask_api_key(self.tavily_api_key) if self.tavily_api_key else "未配置",
+            "TAVILY_API_KEY": self._mask_api_key(self.tavily_api_key),
             "FIRECRAWL_API_URL": self.firecrawl_api_url,
-            "FIRECRAWL_API_KEY": self._mask_api_key(self.firecrawl_api_key) if self.firecrawl_api_key else "未配置",
-            "config_status": config_status
+            "FIRECRAWL_API_KEY": self._mask_api_key(self.firecrawl_api_key),
+            "config_status": config_status,
         }
 
+
 config = Config()
+
+
+
