@@ -270,5 +270,5 @@ A: 在 Claude 对话中说"显示 grok-search 配置信息"，将自动测试 AP
 
 **如果这个项目对您有帮助，请给个 Star！**
 
-[![Star History Chart](https://api.star-history.com/svg?repos=GuDaStudio/GrokSearch&type=date&legend=top-left)](https://www.star-history.com/#GuDaStudio/GrokSearch&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=JARVIS-no1/GrokSearch&type=date&legend=top-left)](https://www.star-history.com/#JARVIS-no1/GrokSearch&type=date&legend=top-left)
 </div>
