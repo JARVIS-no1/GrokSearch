@@ -88,6 +88,10 @@ class Config:
         return os.getenv("GROK_MCP_PATH", "").strip()
 
     @property
+    def mcp_auth_token(self) -> str:
+        return os.getenv("GROK_MCP_AUTH_TOKEN", "").strip()
+
+    @property
     def show_server_banner(self) -> bool:
         return self._env_bool("GROK_MCP_SHOW_BANNER", False)
 
@@ -214,6 +218,7 @@ class Config:
             "GROK_MCP_PORT": self.mcp_port,
             "GROK_MCP_PATH": self.mcp_path or "(auto)",
             "GROK_MCP_SHOW_BANNER": self.show_server_banner,
+            "GROK_MCP_AUTH_TOKEN": self._mask_api_key(self.mcp_auth_token or None),
             "GROK_LOG_LEVEL": self.log_level,
             "GROK_LOG_DIR": str(self.log_dir),
             "TAVILY_API_URL": self.tavily_api_url,

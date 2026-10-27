@@ -1,4 +1,5 @@
-﻿import sys
+import sys
+import sys
 from pathlib import Path
 
 # 支持直接运行：添加 src 目录到 Python 路径
@@ -178,7 +179,7 @@ async def web_search(
     tavily_count = 0
     if extra_sources > 0:
         if has_firecrawl and has_tavily:
-            firecrawl_count = round(extra_sources * 1)
+            firecrawl_count = (extra_sources + 1) // 2
             tavily_count = extra_sources - firecrawl_count
         elif has_firecrawl:
             firecrawl_count = extra_sources
@@ -186,10 +187,14 @@ async def web_search(
             tavily_count = extra_sources
 
     # 并行执行搜索任务
+    grok_error: str = ""
+
     async def _safe_grok() -> str:
+        nonlocal grok_error
         try:
             return await grok_provider.search(query, platform)
-        except Exception:
+        except Exception as e:  # 不再静默吞掉错误，便于排查
+            grok_error = f"{type(e).__name__}: {e}"
             return ""
 
     async def _safe_tavily() -> list[dict] | None:
@@ -223,6 +228,10 @@ async def web_search(
         idx += 1
     if firecrawl_count > 0:
         firecrawl_results = gathered[idx]
+
+    if not grok_result and grok_error:
+        await _SOURCES_CACHE.set(session_id, [])
+        return {"session_id": session_id, "content": f"Grok 搜索失败: {grok_error}", "sources_count": 0}
 
     answer, grok_sources = split_answer_and_sources(grok_result)
     extra = _extra_results_to_sources(tavily_results, firecrawl_results)
@@ -919,6 +928,26 @@ def _configure_process_lifecycle() -> None:
         threading.Thread(target=monitor_parent, daemon=True).start()
 
 
+class _BearerAuthMiddleware:
+    """纯 ASGI 中间件：要求 Authorization: Bearer <token>，/health 放行。兼容 SSE 流式响应。"""
+
+    def __init__(self, app, token: str):
+        self.app = app
+        self._expected = f"Bearer {token}".encode()
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("path") == "/health":
+            return await self.app(scope, receive, send)
+        import hmac
+        auth = dict(scope.get("headers") or []).get(b"authorization", b"")
+        if hmac.compare_digest(auth, self._expected):
+            return await self.app(scope, receive, send)
+        await send({"type": "http.response.start", "status": 401,
+                    "headers": [(b"content-type", b"application/json"),
+                                (b"www-authenticate", b"Bearer")]})
+        await send({"type": "http.response.body", "body": b'{"error":"unauthorized"}'})
+
+
 def _run_server(
     transport: str | None = None,
     *,
@@ -943,12 +972,24 @@ def _run_server(
         resolved_port = port or config.mcp_port
         resolved_path = path or config.mcp_path or _default_path_for_transport(resolved_transport)
 
+        middleware = []
+        if config.mcp_auth_token:
+            from starlette.middleware import Middleware
+            middleware.append(Middleware(_BearerAuthMiddleware, token=config.mcp_auth_token))
+        elif resolved_host not in ("127.0.0.1", "localhost", "::1"):
+            print(
+                "[grok-search] 警告：正在非本机地址上监听且未设置 GROK_MCP_AUTH_TOKEN，"
+                "任何能访问该端口的人都能使用你的 API 额度。",
+                file=sys.stderr,
+            )
+
         mcp.run(
             transport=resolved_transport,
             host=resolved_host,
             port=resolved_port,
             path=resolved_path,
             show_banner=resolved_banner,
+            middleware=middleware or None,
         )
     except KeyboardInterrupt:
         pass

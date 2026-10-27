@@ -117,25 +117,39 @@ class _WaitWithRetryAfter(wait_base):
             return None
 
 
+_SHARED_CLIENT: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    """进程内复用连接池；不跟随重定向，避免带着 Bearer 头被引到别处。"""
+    global _SHARED_CLIENT
+    if _SHARED_CLIENT is None or _SHARED_CLIENT.is_closed:
+        _SHARED_CLIENT = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=6.0, read=120.0, write=10.0, pool=None),
+            follow_redirects=False,
+        )
+    return _SHARED_CLIENT
+
+
 class GrokSearchProvider(BaseSearchProvider):
     def __init__(self, api_url: str, api_key: str, model: str = "grok-4-fast"):
-        super().__init__(api_url, api_key)
+        super().__init__(api_url.rstrip("/"), api_key)
         self.model = model
+
+    def _headers(self) -> dict:
+        return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
     def get_provider_name(self) -> str:
         return "Grok"
 
     async def search(self, query: str, platform: str = "", min_results: int = 3, max_results: int = 10, ctx=None) -> List[SearchResult]:
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = self._headers()
         platform_prompt = ""
 
         if platform:
             platform_prompt = "\n\nYou should search the web for the information you need, and focus on these platform: " + platform + "\n"
 
-        time_context = get_local_time_info() + "\n"
+        time_context = (get_local_time_info() + "\n") if _needs_time_context(query) else ""
 
         payload = {
             "model": self.model,
@@ -149,15 +163,12 @@ class GrokSearchProvider(BaseSearchProvider):
             "stream": True,
         }
 
-        await log_info(ctx, f"platform_prompt: { query + platform_prompt}", config.debug_enabled)
+        await log_info(ctx, f"search query ({len(query)} chars), platform={platform or '-'}", config.debug_enabled)
 
         return await self._execute_stream_with_retry(headers, payload, ctx)
 
     async def fetch(self, url: str, ctx=None) -> str:
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = self._headers()
         payload = {
             "model": self.model,
             "messages": [
@@ -208,15 +219,14 @@ class GrokSearchProvider(BaseSearchProvider):
             except json.JSONDecodeError:
                 pass
         
-        await log_info(ctx, f"content: {content}", config.debug_enabled)
+        await log_info(ctx, f"response received ({len(content)} chars)", config.debug_enabled)
 
         return content
 
     async def _execute_stream_with_retry(self, headers: dict, payload: dict, ctx=None) -> str:
         """执行带重试机制的流式 HTTP 请求"""
-        timeout = httpx.Timeout(connect=6.0, read=120.0, write=10.0, pool=None)
-
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        client = _get_client()
+        if True:
             async for attempt in AsyncRetrying(
                 stop=stop_after_attempt(config.retry_max_attempts + 1),
                 wait=_WaitWithRetryAfter(config.retry_multiplier, config.retry_max_wait),
@@ -235,10 +245,7 @@ class GrokSearchProvider(BaseSearchProvider):
 
     async def describe_url(self, url: str, ctx=None) -> dict:
         """让 Grok 阅读单个 URL 并返回 title + extracts"""
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = self._headers()
         payload = {
             "model": self.model,
             "messages": [
@@ -258,10 +265,7 @@ class GrokSearchProvider(BaseSearchProvider):
 
     async def rank_sources(self, query: str, sources_text: str, total: int, ctx=None) -> list[int]:
         """让 Grok 按查询相关度对信源排序，返回排序后的序号列表"""
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = self._headers()
         payload = {
             "model": self.model,
             "messages": [
