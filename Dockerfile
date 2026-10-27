@@ -1,4 +1,5 @@
-FROM python:3.12-slim
+# 固定基础镜像摘要，保证每次构建一致；升级时更新这里
+FROM python:3.12-slim@sha256:12316debbfb86890f6b2d825820612741ba527ad5a44e3902759141d572bfe8f
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -14,7 +15,7 @@ COPY pyproject.toml README.md requirements.lock ./
 COPY src ./src
 
 # 先按锁定版本装依赖，再装本项目（不再解析依赖），保证构建可复现
-RUN pip install --upgrade pip \
+RUN pip install "pip==25.3" \
     && pip install -r requirements.lock \
     && pip install --no-deps . \
     && useradd --create-home --uid 10001 app

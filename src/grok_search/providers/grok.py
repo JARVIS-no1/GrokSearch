@@ -131,6 +131,9 @@ def _get_client() -> httpx.AsyncClient:
     return _SHARED_CLIENT
 
 
+_MAX_STREAM_BYTES = 4 * 1024 * 1024  # 单次流式响应最多读取 4 MB
+
+
 class GrokSearchProvider(BaseSearchProvider):
     def __init__(self, api_url: str, api_key: str, model: str = "grok-4-fast"):
         super().__init__(api_url.rstrip("/"), api_key)
@@ -186,11 +189,19 @@ class GrokSearchProvider(BaseSearchProvider):
         content = ""
         full_body_buffer = [] 
         
+        total_bytes = 0
         async for line in response.aiter_lines():
             line = line.strip()
             if not line:
                 continue
-            
+
+            total_bytes += len(line)
+            if total_bytes > _MAX_STREAM_BYTES:
+                # 超过上限：停止读取，返回已收到的内容，避免内存被异常大的响应占满
+                if content:
+                    content += "\n\n[响应过长，已截断]"
+                break
+
             full_body_buffer.append(line)
 
             # 兼容 "data: {...}" 和 "data:{...}" 两种 SSE 格式

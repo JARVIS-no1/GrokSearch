@@ -18,3 +18,26 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
       - run: pytest -q
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: 构建镜像（使用锁文件）
+        run: docker build -t grok-search:ci .
+      - name: 未设置令牌时必须拒绝启动
+        run: |
+          set +e
+          docker run --rm -e GROK_API_URL=http://127.0.0.1:9 -e GROK_API_KEY=x grok-search:ci
+          code=$?
+          echo "exit code: $code"
+          test "$code" = "2"
+      - name: 设置令牌后健康检查与鉴权
+        run: |
+          docker run -d --name gs -p 8000:8000 \
+            -e GROK_API_URL=http://127.0.0.1:9 -e GROK_API_KEY=x \
+            -e GROK_MCP_AUTH_TOKEN=ci-token grok-search:ci
+          for i in $(seq 1 30); do curl -fs localhost:8000/health && break; sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8000/mcp/)" = "401"
+          docker rm -f gs

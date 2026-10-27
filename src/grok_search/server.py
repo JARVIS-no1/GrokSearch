@@ -29,13 +29,36 @@ import asyncio
 mcp = FastMCP("grok-search")
 
 _SOURCES_CACHE = SourcesCache(max_size=256)
+_MAX_QUERY_CHARS = 4000
+_MAX_EXTRA_SOURCES = 20
 _AVAILABLE_MODELS_CACHE: dict[tuple[str, str], list[str]] = {}
 _AVAILABLE_MODELS_LOCK = asyncio.Lock()
 
 
 def get_server() -> FastMCP:
-    """Expose the FastMCP instance for direct import and external runners."""
+    """Expose the FastMCP instance for direct import and external runners.
+
+    注意：外部 runner 不会经过 _run_server，因此不会自动挂载鉴权中间件。
+    写入类工具在这种情况下默认禁用；需要 HTTP 鉴权请改用 get_http_app()。
+    """
     return mcp
+
+
+def get_http_app(path: str | None = None, transport: str = "http"):
+    """返回已挂载鉴权中间件的 ASGI 应用，供 uvicorn 等外部 runner 使用。"""
+    global _ACTIVE_TRANSPORT
+    _ACTIVE_TRANSPORT = _normalize_transport(transport)
+    if not config.mcp_auth_token and not config.allow_no_auth:
+        raise RuntimeError("必须设置 GROK_MCP_AUTH_TOKEN（或显式设置 GROK_MCP_ALLOW_NO_AUTH=true）")
+    from starlette.middleware import Middleware
+    middleware = []
+    if config.mcp_auth_token:
+        middleware.append(Middleware(_BearerAuthMiddleware, token=config.mcp_auth_token))
+    return mcp.http_app(
+        path=path or config.mcp_path or _default_path_for_transport(_ACTIVE_TRANSPORT),
+        middleware=middleware or None,
+        transport=_ACTIVE_TRANSPORT,
+    )
 
 
 @mcp.custom_route("/health", methods=["GET"])
@@ -154,6 +177,9 @@ async def web_search(
     extra_sources: Annotated[int, "Number of additional reference results from Tavily/Firecrawl. Set 0 to disable. Default 0."] = 0,
 ) -> dict:
     session_id = new_session_id()
+    if len(query) > _MAX_QUERY_CHARS:
+        return {"session_id": session_id, "content": f"查询过长（{len(query)} 字符，上限 {_MAX_QUERY_CHARS}）", "sources_count": 0}
+    extra_sources = max(0, min(int(extra_sources or 0), _MAX_EXTRA_SOURCES))
     try:
         api_url = config.grok_api_url
         api_key = config.grok_api_key
@@ -902,6 +928,8 @@ def _configure_process_lifecycle() -> None:
 
     if threading.current_thread() is threading.main_thread():
         def handle_shutdown(signum, frame):  # noqa: ARG001
+            # 收到 SIGINT/SIGTERM 属于正常停止：先清理再以 0 退出
+            _close_shared_client()
             os._exit(0)
 
         signal.signal(signal.SIGINT, handle_shutdown)
@@ -935,7 +963,8 @@ def _configure_process_lifecycle() -> None:
         threading.Thread(target=monitor_parent, daemon=True).start()
 
 
-_ACTIVE_TRANSPORT = "stdio"
+# 由 _run_server / get_http_app 设置；未经这两个入口启动时为 None，写入工具默认禁用
+_ACTIVE_TRANSPORT: str | None = None
 
 
 def _admin_tools_allowed() -> bool:
@@ -1003,6 +1032,7 @@ def _run_server(
     _ACTIVE_TRANSPORT = resolved_transport
     resolved_banner = config.show_server_banner if show_banner is None else show_banner
 
+    exit_code = 0
     try:
         if resolved_transport == "stdio":
             mcp.run(transport="stdio", show_banner=resolved_banner)
@@ -1037,9 +1067,15 @@ def _run_server(
         )
     except KeyboardInterrupt:
         pass
+    except BaseException:
+        # 启动或运行异常：打印堆栈并以非 0 退出，让 Railway / Docker 的失败重启策略生效
+        import traceback
+        traceback.print_exc()
+        exit_code = 1
     finally:
         _close_shared_client()
-        os._exit(0)
+        sys.stderr.flush()
+        os._exit(exit_code)
 
 
 def main() -> None:

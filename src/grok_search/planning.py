@@ -119,6 +119,11 @@ class PlanningSession:
         return {name: record.data for name, record in self.phases.items()}
 
 
+_MAX_THOUGHT_CHARS = 4000
+_MAX_LIST_ITEMS = 50
+_MAX_PHASE_DATA_CHARS = 8000
+
+
 class PlanningEngine:
     """规划会话：按最近使用排序，超过 ttl 秒或超出 max_sessions 时淘汰。"""
 
@@ -174,6 +179,30 @@ class PlanningEngine:
         target = revises_phase if is_revision and revises_phase else phase
         if target not in PHASE_NAMES:
             return {"error": f"Unknown phase: {target}. Valid: {', '.join(PHASE_NAMES)}"}
+
+        thought = (thought or "")[:_MAX_THOUGHT_CHARS]
+        try:
+            import json as _json
+            if len(_json.dumps(phase_data, ensure_ascii=False, default=str)) > _MAX_PHASE_DATA_CHARS:
+                return {"error": f"phase_data 过大（上限 {_MAX_PHASE_DATA_CHARS} 字符）"}
+        except (TypeError, ValueError):
+            return {"error": "phase_data 无法序列化"}
+        existing_rec = session.phases.get(target)
+        if (
+            not is_revision
+            and existing_rec is not None
+            and isinstance(existing_rec.data, list)
+            and len(existing_rec.data) >= _MAX_LIST_ITEMS
+        ):
+            return {"error": f"{target} 已达上限 {_MAX_LIST_ITEMS} 条，请用 is_revision 重写"}
+        if (
+            not is_revision
+            and target == _MERGE_STRATEGY_PHASE
+            and existing_rec is not None
+            and isinstance(existing_rec.data, dict)
+            and len(existing_rec.data.get("search_terms", [])) >= _MAX_LIST_ITEMS
+        ):
+            return {"error": f"search_terms 已达上限 {_MAX_LIST_ITEMS} 条，请用 is_revision 重写"}
 
         if target in _ACCUMULATIVE_LIST_PHASES:
             if is_revision:
