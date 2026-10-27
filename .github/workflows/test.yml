@@ -46,13 +46,21 @@ jobs:
           if [ "$ok" != "1" ]; then
             echo "/health 30 秒内未就绪"; docker logs gs; exit 1
           fi
-          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8000/mcp/)" = "401"
-          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Authorization: Bearer ci-token' \
+          fail() { echo "::error::$1"; docker logs gs || true; exit 1; }
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8000/mcp/)
+          [ "$code" = "401" ] || fail "无令牌请求应返回 401，实际 $code"
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Authorization: Bearer ci-token' \
             -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
             -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
-            localhost:8000/mcp/)" = "200"
-          test "$(docker inspect -f '{{.Config.User}}' gs)" = "app"
+            localhost:8000/mcp/)
+          [ "$code" = "200" ] || fail "带令牌 initialize 应返回 200，实际 $code"
+          user=$(docker inspect -f '{{.Config.User}}' gs)
+          [ "$user" = "app" ] || fail "容器应以 app 用户运行，实际 $user"
+          start=$(date +%s)
           docker stop -t 15 gs
-          docker logs gs 2>&1 | grep -q "连接池已关闭"
-          test "$(docker inspect -f '{{.State.ExitCode}}' gs)" = "0"
+          took=$(( $(date +%s) - start ))
+          exit_code=$(docker inspect -f '{{.State.ExitCode}}' gs)
+          echo "docker stop 用时 ${took}s，退出码 ${exit_code}"
+          docker logs gs 2>&1 | grep -q "连接池已关闭" || fail "未执行生命周期清理（用时 ${took}s，退出码 ${exit_code}）"
+          [ "$exit_code" = "0" ] || fail "优雅退出码应为 0，实际 ${exit_code}"
           docker rm gs
