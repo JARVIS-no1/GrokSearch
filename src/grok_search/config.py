@@ -88,6 +88,19 @@ class Config:
         return os.getenv("GROK_MCP_PATH", "").strip()
 
     @property
+    def allow_no_auth(self) -> bool:
+        """显式允许非本机监听时不设 token（不推荐）。"""
+        return self._env_bool("GROK_MCP_ALLOW_NO_AUTH", False)
+
+    @property
+    def admin_tools_enabled(self) -> bool | None:
+        """写入类工具（switch_model / toggle_builtin_tools）开关；未设置时 stdio 开、远程关。"""
+        raw = os.getenv("GROK_ENABLE_ADMIN_TOOLS")
+        if raw is None:
+            return None
+        return raw.strip().lower() in ("true", "1", "yes", "on")
+
+    @property
     def mcp_auth_token(self) -> str:
         return os.getenv("GROK_MCP_AUTH_TOKEN", "").strip()
 
@@ -194,9 +207,8 @@ class Config:
 
     @staticmethod
     def _mask_api_key(key: str | None) -> str:
-        if not key or len(key) <= 8:
-            return "***" if key else "未配置"
-        return f"{key[:4]}{'*' * (len(key) - 8)}{key[-4:]}"
+        # 不再回显任何密钥片段，只说明是否已配置
+        return "已配置" if key else "未配置"
 
     def get_config_info(self) -> dict:
         try:

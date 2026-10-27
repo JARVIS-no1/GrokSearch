@@ -120,11 +120,36 @@ class PlanningSession:
 
 
 class PlanningEngine:
-    def __init__(self):
-        self._sessions: dict[str, PlanningSession] = {}
+    """规划会话：按最近使用排序，超过 ttl 秒或超出 max_sessions 时淘汰。"""
+
+    def __init__(self, max_sessions: int = 256, ttl_seconds: float = 3600.0):
+        from collections import OrderedDict
+        self._sessions: "OrderedDict[str, PlanningSession]" = OrderedDict()
+        self._touched: dict[str, float] = {}
+        self._max = max_sessions
+        self._ttl = ttl_seconds
+
+    def _evict(self) -> None:
+        import time
+        now = time.monotonic()
+        for sid in [k for k, t in self._touched.items() if now - t > self._ttl]:
+            self._sessions.pop(sid, None)
+            self._touched.pop(sid, None)
+        while len(self._sessions) > self._max:
+            sid, _ = self._sessions.popitem(last=False)
+            self._touched.pop(sid, None)
+
+    def _touch(self, sid: str) -> None:
+        import time
+        self._touched[sid] = time.monotonic()
+        self._sessions.move_to_end(sid)
 
     def get_session(self, session_id: str) -> PlanningSession | None:
-        return self._sessions.get(session_id)
+        self._evict()
+        session = self._sessions.get(session_id)
+        if session is not None:
+            self._touch(session_id)
+        return session
 
     def process_phase(
         self,
@@ -136,12 +161,15 @@ class PlanningEngine:
         confidence: float = 1.0,
         phase_data: dict | list | None = None,
     ) -> dict:
+        self._evict()
         if session_id and session_id in self._sessions:
             session = self._sessions[session_id]
         else:
-            sid = session_id if session_id else uuid.uuid4().hex[:12]
+            sid = session_id if session_id else uuid.uuid4().hex
             session = PlanningSession(sid)
             self._sessions[sid] = session
+        self._touch(session.session_id)
+        self._evict()
 
         target = revises_phase if is_revision and revises_phase else phase
         if target not in PHASE_NAMES:

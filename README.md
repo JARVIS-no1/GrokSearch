@@ -214,6 +214,9 @@ https://your-domain.example/sse/
 | `GROK_MCP_PORT` | ❌ | `8000` | HTTP/SSE 监听端口 |
 | `GROK_MCP_PATH` | ❌ | 自动 | 自定义 MCP 路径；`http` 默认 `/mcp/`，`sse` 默认 `/sse/` |
 | `GROK_MCP_SHOW_BANNER` | ❌ | `false` | 是否显示 FastMCP banner |
+| `GROK_MCP_AUTH_TOKEN` | 远程必填 | - | HTTP/SSE 访问令牌，客户端需带 `Authorization: Bearer <token>`；非本机监听且未设置时拒绝启动 |
+| `GROK_MCP_ALLOW_NO_AUTH` | ❌ | `false` | 显式允许非本机监听不设令牌（不推荐） |
+| `GROK_ENABLE_ADMIN_TOOLS` | ❌ | stdio 开 / 远程关 | 是否允许 `switch_model`、`toggle_builtin_tools` 这类写入工具 |
 
 ### 调试与日志
 

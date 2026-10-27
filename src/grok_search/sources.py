@@ -26,29 +26,41 @@ _SOURCES_FUNCTION_PATTERN = re.compile(
 
 
 def new_session_id() -> str:
-    return uuid.uuid4().hex[:12]
+    return uuid.uuid4().hex  # 128 位，不可猜测
 
 
 class SourcesCache:
-    def __init__(self, max_size: int = 256):
+    def __init__(self, max_size: int = 256, ttl_seconds: float = 3600.0):
         self._max_size = max_size
+        self._ttl = ttl_seconds
         self._lock = asyncio.Lock()
-        self._cache: OrderedDict[str, list[dict]] = OrderedDict()
+        self._cache: OrderedDict[str, tuple[float, list[dict]]] = OrderedDict()
+
+    def _evict_expired(self) -> None:
+        import time
+        now = time.monotonic()
+        while self._cache:
+            sid, (ts, _) = next(iter(self._cache.items()))
+            if now - ts <= self._ttl:
+                break
+            self._cache.popitem(last=False)
 
     async def set(self, session_id: str, sources: list[dict]) -> None:
+        import time
         async with self._lock:
-            self._cache[session_id] = sources
+            self._cache[session_id] = (time.monotonic(), sources)
             self._cache.move_to_end(session_id)
+            self._evict_expired()
             while len(self._cache) > self._max_size:
                 self._cache.popitem(last=False)
 
     async def get(self, session_id: str) -> list[dict] | None:
         async with self._lock:
-            sources = self._cache.get(session_id)
-            if sources is None:
+            self._evict_expired()
+            item = self._cache.get(session_id)
+            if item is None:
                 return None
-            self._cache.move_to_end(session_id)
-            return sources
+            return item[1]
 
 
 def merge_sources(*source_lists: list[dict]) -> list[dict]:

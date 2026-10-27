@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -10,10 +10,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md requirements.lock ./
 COPY src ./src
 
-RUN pip install --upgrade pip && pip install . \
+# 先按锁定版本装依赖，再装本项目（不再解析依赖），保证构建可复现
+RUN pip install --upgrade pip \
+    && pip install -r requirements.lock \
+    && pip install --no-deps . \
     && useradd --create-home --uid 10001 app
 USER app
 

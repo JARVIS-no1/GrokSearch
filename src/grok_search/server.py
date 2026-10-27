@@ -1,5 +1,4 @@
 import sys
-import sys
 from pathlib import Path
 
 # 支持直接运行：添加 src 目录到 Python 路径
@@ -229,13 +228,15 @@ async def web_search(
     if firecrawl_count > 0:
         firecrawl_results = gathered[idx]
 
-    if not grok_result and grok_error:
-        await _SOURCES_CACHE.set(session_id, [])
-        return {"session_id": session_id, "content": f"Grok 搜索失败: {grok_error}", "sources_count": 0}
-
     answer, grok_sources = split_answer_and_sources(grok_result)
     extra = _extra_results_to_sources(tavily_results, firecrawl_results)
     all_sources = merge_sources(grok_sources, extra)
+
+    if not grok_result and grok_error:
+        # Grok 失败时仍保留 Tavily/Firecrawl 的结果，并明确告知错误
+        answer = f"Grok 搜索失败: {grok_error}"
+        if all_sources:
+            answer += f"\n已获取 {len(all_sources)} 条额外信源，可用 get_sources 查看。"
 
     await _SOURCES_CACHE.set(session_id, all_sources)
     return {"session_id": session_id, "content": answer, "sources_count": len(all_sources)}
@@ -589,6 +590,9 @@ async def switch_model(
 ) -> str:
     import json
 
+    if not _admin_tools_allowed():
+        return _ADMIN_DISABLED_MSG
+
     try:
         previous_model = config.grok_model
         config.set_model(model)
@@ -640,6 +644,9 @@ async def toggle_builtin_tools(
     action: Annotated[str, "Action to perform: 'on' (block built-in), 'off' (allow built-in), or 'status' (check current state)."] = "status"
 ) -> str:
     import json
+
+    if not _admin_tools_allowed() and action not in ("status",):
+        return _ADMIN_DISABLED_MSG
 
     # Locate project root
     root = Path.cwd()
@@ -928,6 +935,22 @@ def _configure_process_lifecycle() -> None:
         threading.Thread(target=monitor_parent, daemon=True).start()
 
 
+_ACTIVE_TRANSPORT = "stdio"
+
+
+def _admin_tools_allowed() -> bool:
+    flag = config.admin_tools_enabled
+    if flag is not None:
+        return flag
+    return _ACTIVE_TRANSPORT == "stdio"
+
+
+_ADMIN_DISABLED_MSG = (
+    '{"status": "❌ 已禁用", "message": "远程模式下默认禁用写入类工具；'
+    '如确需开启，请设置环境变量 GROK_ENABLE_ADMIN_TOOLS=true"}'
+)
+
+
 class _BearerAuthMiddleware:
     """纯 ASGI 中间件：要求 Authorization: Bearer <token>，/health 放行。兼容 SSE 流式响应。"""
 
@@ -948,6 +971,21 @@ class _BearerAuthMiddleware:
         await send({"type": "http.response.body", "body": b'{"error":"unauthorized"}'})
 
 
+def _close_shared_client() -> None:
+    """退出前尽量关闭共享连接池（尽力而为，失败不影响退出）。"""
+    try:
+        from .providers import grok as _grok
+    except ImportError:
+        from grok_search.providers import grok as _grok
+    client = getattr(_grok, "_SHARED_CLIENT", None)
+    if client is None or client.is_closed:
+        return
+    try:
+        asyncio.run(client.aclose())
+    except Exception:
+        pass
+
+
 def _run_server(
     transport: str | None = None,
     *,
@@ -960,7 +998,9 @@ def _run_server(
 
     _configure_process_lifecycle()
 
+    global _ACTIVE_TRANSPORT
     resolved_transport = _normalize_transport(transport or config.mcp_transport)
+    _ACTIVE_TRANSPORT = resolved_transport
     resolved_banner = config.show_server_banner if show_banner is None else show_banner
 
     try:
@@ -977,11 +1017,15 @@ def _run_server(
             from starlette.middleware import Middleware
             middleware.append(Middleware(_BearerAuthMiddleware, token=config.mcp_auth_token))
         elif resolved_host not in ("127.0.0.1", "localhost", "::1"):
-            print(
-                "[grok-search] 警告：正在非本机地址上监听且未设置 GROK_MCP_AUTH_TOKEN，"
-                "任何能访问该端口的人都能使用你的 API 额度。",
-                file=sys.stderr,
-            )
+            if not config.allow_no_auth:
+                print(
+                    "[grok-search] 拒绝启动：在非本机地址上监听必须设置 GROK_MCP_AUTH_TOKEN。"
+                    "（确需裸奔可设 GROK_MCP_ALLOW_NO_AUTH=true，不推荐）",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                os._exit(2)
+            print("[grok-search] 警告：未设置 GROK_MCP_AUTH_TOKEN，服务对所有人开放。", file=sys.stderr)
 
         mcp.run(
             transport=resolved_transport,
@@ -994,6 +1038,7 @@ def _run_server(
     except KeyboardInterrupt:
         pass
     finally:
+        _close_shared_client()
         os._exit(0)
 
 
