@@ -177,7 +177,7 @@ def test_end_to_end_auth_and_admin_block():
     }
     env.pop("GROK_ENABLE_ADMIN_TOOLS", None)
     proc = subprocess.Popen([sys.executable, "-m", "grok_search.server"], env=env,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     base = f"http://127.0.0.1:{port}"
     client = httpx.Client(trust_env=False, timeout=5)  # 不走系统代理
     try:
@@ -210,4 +210,136 @@ def test_end_to_end_auth_and_admin_block():
     finally:
         client.close()
         proc.terminate()
-        proc.wait(timeout=10)
+        _, err = proc.communicate(timeout=15)
+    # SIGTERM 应优雅退出：生命周期清理执行，退出码为 0
+    if sys.platform != "win32":
+        assert proc.returncode == 0
+        assert "连接池已关闭" in err
+
+
+# ---------- 外部 runner：uvicorn --factory get_http_app ----------
+def test_external_runner_factory_has_auth():
+    import httpx
+    port = _free_port()
+    env = {**os.environ, "GROK_API_URL": "http://127.0.0.1:9", "GROK_API_KEY": "x",
+           "GROK_MCP_AUTH_TOKEN": "factory-token"}
+    env.pop("GROK_ENABLE_ADMIN_TOOLS", None)
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "uvicorn", "--factory", "grok_search.server:get_http_app",
+         "--host", "127.0.0.1", "--port", str(port)],
+        env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    client = httpx.Client(trust_env=False, timeout=5)
+    base = f"http://127.0.0.1:{port}"
+    try:
+        for _ in range(60):
+            try:
+                client.get(f"{base}/health")
+                break
+            except httpx.HTTPError:
+                time.sleep(0.25)
+        hdr = {"content-type": "application/json", "accept": "application/json, text/event-stream"}
+        init = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {"protocolVersion": "2025-03-26", "capabilities": {},
+                           "clientInfo": {"name": "t", "version": "1"}}}
+        assert client.post(f"{base}/mcp/", json=init, headers=hdr).status_code == 401
+        auth = {**hdr, "authorization": "Bearer factory-token"}
+        r = client.post(f"{base}/mcp/", json=init, headers=auth)
+        assert r.status_code == 200
+        auth["mcp-session-id"] = r.headers["mcp-session-id"]
+        client.post(f"{base}/mcp/", headers=auth,
+                    json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+        r = client.post(f"{base}/mcp/", headers=auth, json={
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {"name": "switch_model", "arguments": {"model": "x"}}})
+        assert "已禁用" in r.text
+    finally:
+        client.close()
+        proc.terminate()
+        proc.wait(timeout=15)
+
+
+# ---------- 拒绝写入时不产生任何文件副作用 ----------
+async def test_refused_admin_tools_have_no_side_effects(tmp_path, monkeypatch):
+    from fastmcp import Client
+    monkeypatch.delenv("GROK_ENABLE_ADMIN_TOOLS", raising=False)
+    monkeypatch.setattr(server, "_ACTIVE_TRANSPORT", "http")
+    monkeypatch.chdir(tmp_path)
+    cfg_file = config.config_file
+    before = cfg_file.read_bytes() if cfg_file.exists() else None
+    async with Client(server.mcp) as c:
+        r1 = await c.call_tool("toggle_builtin_tools", {"action": "on"})
+        r2 = await c.call_tool("switch_model", {"model": "evil-model"})
+    text = str(r1.content) + str(r2.content)
+    assert text.count("已禁用") == 2
+    assert not (tmp_path / ".claude").exists()
+    after = cfg_file.read_bytes() if cfg_file.exists() else None
+    assert before == after
+
+
+# ---------- 上游响应处理边界 ----------
+class _FakeResp:
+    def __init__(self, chunks):
+        self._chunks = chunks
+        self.read_after_done = False
+
+    async def aiter_bytes(self):
+        for c in self._chunks:
+            if c == b"__AFTER__":
+                self.read_after_done = True
+                continue
+            yield c
+
+
+def _provider():
+    from grok_search.providers.grok import GrokSearchProvider
+    return GrokSearchProvider("http://127.0.0.1:9", "x", "m")
+
+
+def _sse(text):
+    import json as _j
+    return ("data: " + _j.dumps({"choices": [{"delta": {"content": text}}]}) + "\n").encode()
+
+
+async def test_stream_stops_at_done():
+    resp = _FakeResp([_sse("你好"), _sse("世界"), b"data: [DONE]\n", b"__AFTER__", _sse("不该出现")])
+    out = await _provider()._parse_streaming_response(resp)
+    assert out == "你好世界"
+    assert resp.read_after_done is False
+
+
+async def test_stream_byte_cap_without_newlines(monkeypatch):
+    from grok_search.providers import grok as g
+    monkeypatch.setattr(g, "_MAX_STREAM_BYTES", 1000)
+    resp = _FakeResp([_sse("ok")] + [b"x" * 400] * 10)  # 无换行的超长数据
+    out = await _provider()._parse_streaming_response(resp)
+    assert out.startswith("ok") and "截断" in out
+
+
+def test_retry_after_is_capped():
+    import httpx
+    from grok_search.providers.grok import _WaitWithRetryAfter
+
+    class _State:
+        class outcome:
+            failed = True
+            @staticmethod
+            def exception():
+                req = httpx.Request("POST", "http://x")
+                resp = httpx.Response(429, headers={"Retry-After": "99999"}, request=req)
+                return httpx.HTTPStatusError("429", request=req, response=resp)
+        attempt_number = 1
+
+    assert _WaitWithRetryAfter(1, 10)(_State) == 10
+
+
+async def test_total_deadline(monkeypatch):
+    from grok_search.providers import grok as g
+    monkeypatch.setattr(g, "_TOTAL_DEADLINE_SECONDS", 0.2)
+    p = _provider()
+
+    async def slow(*a, **k):
+        await asyncio.sleep(5)
+
+    monkeypatch.setattr(p, "_execute_stream_inner", slow)
+    with pytest.raises(TimeoutError):
+        await p._execute_stream_with_retry({}, {})

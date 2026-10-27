@@ -24,4 +24,5 @@ USER app
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
   CMD python -c "import os,urllib.request;urllib.request.urlopen(f'http://127.0.0.1:{os.getenv(\"PORT\",\"8000\")}/health',timeout=3)" || exit 1
 
-CMD sh -c "GROK_MCP_PORT=${PORT:-8000} python -m grok_search.server"
+# exec 让 python 成为 PID 1，能直接收到 docker stop 的 SIGTERM 并优雅退出
+CMD sh -c "GROK_MCP_PORT=${PORT:-8000} exec python -m grok_search.server"

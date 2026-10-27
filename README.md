@@ -216,6 +216,8 @@ https://your-domain.example/sse/
 | `GROK_MCP_SHOW_BANNER` | ❌ | `false` | 是否显示 FastMCP banner |
 | `GROK_MCP_AUTH_TOKEN` | 远程必填 | - | HTTP/SSE 访问令牌，客户端需带 `Authorization: Bearer <token>`；非本机监听且未设置时拒绝启动 |
 | `GROK_MCP_ALLOW_NO_AUTH` | ❌ | `false` | 显式允许非本机监听不设令牌（不推荐） |
+| `GROK_REQUEST_DEADLINE` | ❌ | `300` | 单次 Grok 请求（含重试）的整体时限，秒 |
+| `GROK_MAX_CONCURRENCY` | ❌ | `8` | 同时进行的 Grok 上游请求数上限 |
 | `GROK_ENABLE_ADMIN_TOOLS` | ❌ | stdio 开 / 远程关 | 是否允许 `switch_model`、`toggle_builtin_tools` 这类写入工具；未经内置入口启动（如外部 runner）时默认关 |
 
 > 用 uvicorn 等外部 runner 托管时，请使用 `grok_search.server:get_http_app` 工厂（`uvicorn --factory grok_search.server:get_http_app`），它会自动挂载鉴权；直接用 `get_server()` 不会挂载鉴权。

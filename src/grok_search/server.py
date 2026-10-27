@@ -26,7 +26,24 @@ except ImportError:
 
 import asyncio
 
-mcp = FastMCP("grok-search")
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def _lifespan(server):  # noqa: ARG001
+    """服务生命周期：退出时在事件循环内关闭共享连接池。"""
+    try:
+        yield
+    finally:
+        try:
+            from .providers.grok import aclose_shared_client
+        except ImportError:
+            from grok_search.providers.grok import aclose_shared_client
+        await aclose_shared_client()
+        print("[grok-search] 连接池已关闭", file=sys.stderr, flush=True)
+
+
+mcp = FastMCP("grok-search", lifespan=_lifespan)
 
 _SOURCES_CACHE = SourcesCache(max_size=256)
 _MAX_QUERY_CHARS = 4000
@@ -928,8 +945,7 @@ def _configure_process_lifecycle() -> None:
 
     if threading.current_thread() is threading.main_thread():
         def handle_shutdown(signum, frame):  # noqa: ARG001
-            # 收到 SIGINT/SIGTERM 属于正常停止：先清理再以 0 退出
-            _close_shared_client()
+            # 仅在 stdio 模式生效（HTTP/SSE 由 uvicorn 接管信号并优雅关闭，触发 _lifespan 清理）
             os._exit(0)
 
         signal.signal(signal.SIGINT, handle_shutdown)
@@ -1025,8 +1041,6 @@ def _run_server(
 ) -> None:
     import os
 
-    _configure_process_lifecycle()
-
     global _ACTIVE_TRANSPORT
     resolved_transport = _normalize_transport(transport or config.mcp_transport)
     _ACTIVE_TRANSPORT = resolved_transport
@@ -1035,8 +1049,16 @@ def _run_server(
     exit_code = 0
     try:
         if resolved_transport == "stdio":
+            # stdio：客户端断开时需要立刻退出，使用自定义信号处理
+            _configure_process_lifecycle()
             mcp.run(transport="stdio", show_banner=resolved_banner)
             return
+
+        # HTTP/SSE：把 SIGTERM（docker stop / Railway 停止）当作 Ctrl+C 处理，
+        # 让服务走正常关闭流程并执行 _lifespan 清理，而不是被直接杀掉
+        import signal
+        if sys.platform != "win32":
+            signal.signal(signal.SIGTERM, signal.default_int_handler)
 
         resolved_host = host or config.mcp_host
         resolved_port = port or config.mcp_port

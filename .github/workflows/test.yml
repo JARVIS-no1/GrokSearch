@@ -38,6 +38,21 @@ jobs:
           docker run -d --name gs -p 8000:8000 \
             -e GROK_API_URL=http://127.0.0.1:9 -e GROK_API_KEY=x \
             -e GROK_MCP_AUTH_TOKEN=ci-token grok-search:ci
-          for i in $(seq 1 30); do curl -fs localhost:8000/health && break; sleep 1; done
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fs localhost:8000/health; then ok=1; break; fi
+            sleep 1
+          done
+          if [ "$ok" != "1" ]; then
+            echo "/health 30 秒内未就绪"; docker logs gs; exit 1
+          fi
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8000/mcp/)" = "401"
-          docker rm -f gs
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Authorization: Bearer ci-token' \
+            -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
+            localhost:8000/mcp/)" = "200"
+          test "$(docker inspect -f '{{.Config.User}}' gs)" = "app"
+          docker stop -t 15 gs
+          docker logs gs 2>&1 | grep -q "连接池已关闭"
+          test "$(docker inspect -f '{{.State.ExitCode}}' gs)" = "0"
+          docker rm gs
